@@ -485,33 +485,50 @@ class BasicScraperValidator:
 
 
 
+    import random
+
     async def score_random_synthetic_query(self):
         # Collect synthetic queries and score randomly
         synthetic_queries_collection_size = 2
-
+    
         if len(self.synthetic_history) < synthetic_queries_collection_size:
             bt.logging.info(
                 f"Skipping scoring random synthetic query as history length is {len(self.synthetic_history)}"
             )
-
             return
-
+    
+        # 1️⃣ Select a synthetic query randomly from history
         event, tasks, final_synapses, uids, start_time = random.choice(
             self.synthetic_history
         )
-
+    
+        # 2️⃣ Merge organic responses before scoring
+        for i, uid in enumerate(uids):
+            if uid in self.organic_history:
+                bt.logging.info(f"Including organic response from miner {uid} in scoring.")
+                final_synapses[i] = self.organic_history[uid][1]  # Replace synthetic response with organic
+    
+        # 3️⃣ Log the event before scoring
         bt.logging.info(f"Scoring random synthetic query: {event}")
-
+    
+        # 4️⃣ Compute rewards and penalties (scoring)
         await self.compute_rewards_and_penalties(
             event=event,
             tasks=tasks,
-            responses=final_synapses,
+            responses=final_synapses,  # Now includes both synthetic and organic responses
             uids=uids,
             start_time=start_time,
             is_synthetic=True,
         )
-
+    
+        # 5️⃣ Clear synthetic history after scoring
         self.synthetic_history = []
+    
+        # 6️⃣ Remove used organic responses
+        for uid in uids:
+            if uid in self.organic_history:
+                del self.organic_history[uid]
+
 
     async def organic(
         self,
