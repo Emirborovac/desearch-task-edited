@@ -530,24 +530,25 @@ class BasicScraperValidator:
                 del self.organic_history[uid]
 
 
+    
     async def organic(
-        self,
-        query,
-        random_synapse: TwitterSearchSynapse = None,
-        random_uid=None,
-        specified_uids=None,
-    ):
+            self,
+            query,
+            random_synapse: TwitterSearchSynapse = None,
+            random_uid=None,
+            specified_uids=None,
+        ):
         """Receives question from user and returns the response from the miners."""
-
+    
         if not len(self.neuron.available_uids):
             bt.logging.info("No available UIDs")
             raise StopAsyncIteration("No available UIDs")
-
+    
         is_interval_query = random_synapse is not None
-
+    
         try:
             prompt = query.get("query", "")
-
+    
             tasks = [
                 SearchTask(
                     base_text=prompt,
@@ -556,7 +557,7 @@ class BasicScraperValidator:
                     criteria=[],
                 )
             ]
-
+    
             async_responses, uids, event, start_time = (
                 await self.run_twitter_basic_search_and_score(
                     tasks=tasks,
@@ -571,9 +572,9 @@ class BasicScraperValidator:
                     ],
                 )
             )
-
+    
             final_responses = []
-
+    
             # Process responses and collect successful ones
             for response in async_responses:
                 if response:
@@ -583,13 +584,13 @@ class BasicScraperValidator:
                     bt.logging.warning(
                         f"Invalid response for UID: {response.axon.hotkey if response else 'Unknown'}"
                     )
-
+    
             async def process_and_score_responses(uids):
                 if is_interval_query:
                     # Add the random_synapse to final_responses and its UID to uids
                     final_responses.append(random_synapse)
                     uids = torch.cat([uids, torch.tensor([random_uid])])
-
+    
                 # Compute rewards and penalties
                 _, _, _, _, original_rewards = await self.compute_rewards_and_penalties(
                     event=event,
@@ -599,15 +600,19 @@ class BasicScraperValidator:
                     start_time=start_time,
                     is_synthetic=False,
                 )
-
-                # Save organic queries if not an interval query
-                if not is_interval_query:
-                    self.basic_organic_query_state.save_organic_queries(
-                        final_responses, uids, original_rewards
-                    )
-
+    
+                # 1️⃣ Ignore the old organic query storage method
+                # self.basic_organic_query_state.save_organic_queries(final_responses, uids, original_rewards)
+    
+                # 2️⃣ Instead, store organic queries in `self.organic_history`
+                current_time = datetime.utcnow()
+                for i, uid in enumerate(uids):
+                    self.organic_history[uid] = (current_time, final_responses[i])
+                    bt.logging.info(f"Stored organic response for miner {uid} at {current_time}")
+    
             # Schedule scoring task
             asyncio.create_task(process_and_score_responses(uids))
+    
         except Exception as e:
             bt.logging.error(f"Error in organic: {e}")
             raise e
