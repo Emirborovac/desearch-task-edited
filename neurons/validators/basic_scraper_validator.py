@@ -446,7 +446,7 @@ class BasicScraperValidator:
             )
     
             # 5️⃣ Run the Twitter search with only filtered UIDs
-            responses, uids, event, start_time = (
+            synthetic_responses, synthetic_uids, event, start_time = (
                 await self.run_twitter_basic_search_and_score(
                     tasks=tasks,
                     strategy=strategy,
@@ -456,13 +456,33 @@ class BasicScraperValidator:
                 )
             )
     
-            self.synthetic_history.append((event, tasks, responses, uids, start_time))
+            # 6️⃣ Merge synthetic responses with organic responses while keeping order
+            all_uids = sorted(set(self.neuron.available_uids))  # Keep original order
+            combined_responses = []
+            
+            for uid in all_uids:
+                if uid in synthetic_uids:
+                    # Get synthetic response
+                    index = synthetic_uids.index(uid)
+                    combined_responses.append(synthetic_responses[index])
+                elif uid in self.organic_history:
+                    # Get organic response
+                    combined_responses.append(self.organic_history[uid][1])
+    
+            # 7️⃣ Store the merged responses properly
+            self.synthetic_history.append((event, tasks, combined_responses, all_uids, start_time))
+    
+            # 8️⃣ Remove used organic responses from history
+            for uid in recent_organic_uids:
+                if uid in self.organic_history:
+                    del self.organic_history[uid]
     
             await self.score_random_synthetic_query()
     
         except Exception as e:
             bt.logging.error(f"Error in query_and_score_twitter_basic: {e}")
             raise
+
 
 
     async def score_random_synthetic_query(self):
