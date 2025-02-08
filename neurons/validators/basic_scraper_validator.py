@@ -390,61 +390,80 @@ class BasicScraperValidator:
 
         return params
 
-    async def query_and_score_twitter_basic(self, strategy=QUERY_MINERS.RANDOM):
-        try:
-            if not len(self.neuron.available_uids):
-                bt.logging.info(
-                    "No available UIDs, skipping basic Twitter search task."
-                )
-                return
+    from datetime import datetime, timedelta
 
-            dataset = QuestionsDataset()
-
-            # Question generation
-            prompts = await asyncio.gather(
-                *[
-                    dataset.generate_basic_question_with_openai()
-                    for _ in range(len(self.neuron.available_uids))
-                ]
+async def query_and_score_twitter_basic(self, strategy=QUERY_MINERS.RANDOM):
+    try:
+        if not len(self.neuron.available_uids):
+            bt.logging.info(
+                "No available UIDs, skipping basic Twitter search task."
             )
+            return
 
-            params = [
-                self.generate_random_twitter_search_params()
-                for _ in range(len(prompts))
+        dataset = QuestionsDataset()
+
+        # 1️⃣ Find miners that had organic queries in the past 4 hours
+        cutoff_time = datetime.utcnow() - timedelta(hours=4)
+        recent_organic_uids = [
+            uid for uid, (timestamp, _) in self.organic_history.items()
+            if timestamp > cutoff_time
+        ]
+
+        # 2️⃣ Get miners who haven't answered organic queries recently
+        available_uids = set(self.neuron.available_uids)
+        filtered_uids = list(available_uids - set(recent_organic_uids))
+
+        if not filtered_uids:
+            bt.logging.info("All available miners had recent organic queries. Skipping synthetic query.")
+            return
+
+        # 3️⃣ Generate questions for the filtered miners
+        prompts = await asyncio.gather(
+            *[
+                dataset.generate_basic_question_with_openai()
+                for _ in range(len(filtered_uids))
             ]
+        )
 
-            # 2) Build tasks from the generated prompts
-            tasks = [
-                SearchTask(
-                    base_text=prompt,
-                    task_name="twitter search",
-                    task_type="twitter_search",
-                    criteria=[],
-                )
-                for prompt in prompts
-            ]
+        params = [
+            self.generate_random_twitter_search_params()
+            for _ in range(len(prompts))
+        ]
 
-            bt.logging.debug(
-                f"[query_and_score_twitter_basic] Running with prompts: {prompts}"
+        # 4️⃣ Build tasks from the generated prompts
+        tasks = [
+            SearchTask(
+                base_text=prompt,
+                task_name="twitter search",
+                task_type="twitter_search",
+                criteria=[],
             )
+            for prompt in prompts
+        ]
 
-            # 4) Run the basic Twitter search
-            responses, uids, event, start_time = (
-                await self.run_twitter_basic_search_and_score(
-                    tasks=tasks,
-                    strategy=strategy,
-                    is_only_allowed_miner=False,
-                    specified_uids=None,
-                    params_list=params,
-                )
+        bt.logging.debug(
+            f"[query_and_score_twitter_basic] Running with prompts: {prompts}"
+        )
+
+        # 5️⃣ Run the Twitter search with only filtered UIDs
+        responses, uids, event, start_time = (
+            await self.run_twitter_basic_search_and_score(
+                tasks=tasks,
+                strategy=strategy,
+                is_only_allowed_miner=False,
+                specified_uids=filtered_uids,  # Pass only miners who didn't recently get organic queries
+                params_list=params,
             )
+        )
 
-            self.synthetic_history.append((event, tasks, responses, uids, start_time))
+        self.synthetic_history.append((event, tasks, responses, uids, start_time))
 
-            await self.score_random_synthetic_query()
-        except Exception as e:
-            bt.logging.error(f"Error in query_and_score_twitter_basic: {e}")
-            raise
+        await self.score_random_synthetic_query()
+
+    except Exception as e:
+        bt.logging.error(f"Error in query_and_score_twitter_basic: {e}")
+        raise
+
 
     async def score_random_synthetic_query(self):
         # Collect synthetic queries and score randomly
